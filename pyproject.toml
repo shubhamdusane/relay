@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relay-llm"
+version = "0.1.0"
+description = "Cost-optimizing LLM router. Route every call to the cheapest model that can handle the task. Drop-in OpenAI-compatible client."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Shubham Dusane", email = "sdusane4@gmail.com" }]
+keywords = ["llm", "router", "cost", "openai", "anthropic", "gemini", "agent", "gateway"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.25"]
+gemini = ["google-generativeai>=0.5"]
+all = ["openai>=1.0", "anthropic>=0.25", "google-generativeai>=0.5"]
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.4", "mypy>=1.8"]
+
+[project.urls]
+Homepage = "https://github.com/shubhamdusane/relay"
+Repository = "https://github.com/shubhamdusane/relay"
+Issues = "https://github.com/shubhamdusane/relay/issues"
+
+[project.scripts]
+relay = "relay.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["relay*"]
+exclude = ["tests*", "examples*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
