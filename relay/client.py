@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from relay.budget import Budget
-from relay.router import Router, TaskClass
+from relay.router import Router
 
 
 def _prompt_text_from_messages(messages: list) -> str:
@@ -44,9 +44,7 @@ def _prompt_text_from_messages(messages: list) -> str:
 def _token_count_from_response(resp: Any) -> tuple[int, int]:
     """Extract (input_tokens, output_tokens) from common SDK response shapes."""
     # OpenAI style: resp.usage.prompt_tokens / completion_tokens
-    usage = getattr(resp, "usage", None) or (
-        resp.get("usage") if isinstance(resp, dict) else None
-    )
+    usage = getattr(resp, "usage", None) or (resp.get("usage") if isinstance(resp, dict) else None)
     if usage is None:
         return 0, 0
 
@@ -65,6 +63,7 @@ def _token_count_from_response(resp: Any) -> tuple[int, int]:
 
 
 # ---------- OpenAI wrapper ----------
+
 
 @dataclass
 class _OpenAIChatCompletions:
@@ -180,6 +179,7 @@ def wrap_openai(
 
 
 # ---------- Anthropic wrapper ----------
+
 
 @dataclass
 class _AnthropicMessages:

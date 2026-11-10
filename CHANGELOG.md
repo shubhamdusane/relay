@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-07-08
 
 ### Added
-- Initial release of relay-llm
+- Initial release of relay (distribution name relay-llm in pyproject.toml; not published to PyPI)
 - Cost-optimizing LLM router with drop-in OpenAI-compatible client
 - Rule-based deterministic task classifier (<1ms, no ML call)
 - Three-tier routing: SIMPLE, STANDARD, COMPLEX
@@ -20,5 +20,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `relay.budget` CLI command — inspect spend
 - Claude Code hook integration
 - Thread-safe Budget with internal lock
-- Comprehensive test suite (55+ tests)
+- Test suite (55 tests, offline)
 - `py.typed` marker for PEP 561

@@ -106,11 +106,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
     hook_snippet = {
         "hooks": {
             "UserPromptSubmit": [
-                {
-                    "hooks": [
-                        {"type": "command", "command": "python -m relay.hook"}
-                    ]
-                }
+                {"hooks": [{"type": "command", "command": "python -m relay.hook"}]}
             ]
         }
     }

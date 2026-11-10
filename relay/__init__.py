@@ -1,20 +1,20 @@
 """relay — cost-optimizing LLM router.
 
 Route every call to the cheapest model that can handle the task.
-Drop-in OpenAI-compatible wrapper. Deterministic rules + optional ML classifier.
+Drop-in OpenAI-compatible wrapper. Deterministic keyword and length rules; no model call.
 """
 
+from relay.budget import Budget, BudgetExceeded
+from relay.client import RelayClient, wrap_anthropic, wrap_openai
+from relay.pricing import MODEL_PRICING, estimate_cost
 from relay.router import (
-    Router,
-    RouteDecision,
-    Tier,
-    TaskClass,
     DEFAULT_TIERS,
+    RouteDecision,
+    Router,
+    TaskClass,
+    Tier,
     classify_task,
 )
-from relay.pricing import MODEL_PRICING, estimate_cost
-from relay.budget import Budget, BudgetExceeded
-from relay.client import wrap_openai, wrap_anthropic, RelayClient
 
 __version__ = "0.1.0"
 __all__ = [

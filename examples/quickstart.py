@@ -19,7 +19,9 @@ def main() -> None:
         d = router.decide(p)
         q = relay.estimate_cost(d.model, len(p) // 4, 256)
         premium = relay.estimate_cost("claude-opus-4", len(p) // 4, 256)
-        saved_pct = (premium.total_usd - q.total_usd) / premium.total_usd * 100 if premium.total_usd else 0
+        saved_pct = (
+            (premium.total_usd - q.total_usd) / premium.total_usd * 100 if premium.total_usd else 0
+        )
         print(
             f"{p[:58]:<60} {d.task_class.value:<10} {d.model:<22} ${q.total_usd:.6f}  "
             f"(vs opus: -{saved_pct:.0f}%)"

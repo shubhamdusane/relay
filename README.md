@@ -1,464 +1,182 @@
 # Relay
 
-> A cost-optimizing LLM router that reduces your API bills by 40-60% while maintaining quality.
+A small, rule-based LLM router and budget guard for Python. Relay looks at a prompt, assigns it to a
+cost tier (simple / standard / complex), picks a model from that tier, and can enforce hard daily and
+monthly spend caps before a call is made.
 
-Relay sits between your application and LLM providers (OpenAI, Anthropic), automatically routing requests to the cheapest model that can handle your task. No prompt rewriting, no quality degradation — just smarter routing.
+**Status: early alpha (v0.1.0).** Routing and budget logic are unit-tested; the SDK wrappers have only
+been tested against mocks, not live provider APIs. See [Status & limitations](#status--limitations).
 
----
+## What it does
 
-## Table of Contents
+- **Rule-based task classifier** (`relay.classify_task`): regex keywords plus prompt length decide
+  between `SIMPLE`, `STANDARD` and `COMPLEX`. Deterministic, no extra model call, no network.
+- **Tier to model mapping** (`relay.Router`, `relay.DEFAULT_TIERS`): each tier is an ordered list of
+  models. You can override tiers, force a tier, or pass your own classifier callable.
+- **Budget gate** (`relay.Budget`): daily and monthly USD caps, tracked in an append-only JSONL file.
+  `check()` raises `BudgetExceeded` before a call; `record()` logs spend after it.
+- **SDK wrappers** (`relay.wrap_openai`, `relay.wrap_anthropic`): proxy an existing client; when you do
+  not pass `model=`, Relay fills it in from the router and applies the budget check.
+- **CLI** (`relay route | bench | price | models | budget | install`) and a Claude Code
+  `UserPromptSubmit` hook (`python -m relay.hook`) that reports the routing decision.
+- **Pricing table** (`relay.MODEL_PRICING`): hard-coded list prices (USD per 1M tokens) used for
+  estimates. These go stale; check provider pricing pages.
 
-- [What is Relay?](#what-is-relay)
-- [The Problem](#the-problem)
-- [How It Works](#how-it-works)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Benchmarks](#benchmarks)
-- [How the Classifier Works](#how-the-classifier-works)
-- [Budget Gate](#budget-gate)
-- [Python API Reference](#python-api-reference)
-- [Architecture](#architecture)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [License](#license)
-
----
-
-## What is Relay?
-
-Relay is a **smart LLM router**. It intercepts your API calls to OpenAI or Anthropic, classifies the complexity of each request, and routes it to the cheapest model that can do the job well.
-
-Think of it like this:
-
-- Simple question → small, cheap model
-- Complex reasoning → powerful (expensive) model
-- You keep control with budget caps and tier overrides
-
-**Zero changes to your prompts.** Relay works by wrapping your existing client — your code stays the same, your bills drop.
-
----
-
-## The Problem
-
-LLM API costs are **unpredictable and growing**:
-
-- Teams use GPT-4/Claude for everything — even simple classifications and summaries
-- A single misclassified call to GPT-4 costs **20x more** than necessary
-- Monthly bills spike without visibility into *why*
-- Budget overruns happen silently
-
-**Example waste:**
-
-| Task | Model Used | Cost | Optimal Model | Optimal Cost |
-|------|-----------|------|---------------|--------------|
-| Sentiment analysis | GPT-4 | $0.030 | GPT-3.5-turbo | $0.0005 |
-| Simple QA | Claude 3.5 Sonnet | $0.018 | Claude 3.5 Haiku | $0.001 |
-| JSON extraction | GPT-4 | $0.060 | GPT-4o-mini | $0.0003 |
-
-**Relay fixes this automatically.**
-
----
-
-## How It Works
-
-Relay sits in your request pipeline and makes routing decisions based on prompt analysis:
-
-### Routing Flow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     YOUR APPLICATION                        │
-│                                                             │
-│   client = RelayClient(api_key="sk-...")                    │
-│   response = client.chat.completions.create(...)            │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │   RELAY ROUTER      │
-                    │                     │
-                    │  1. Classify        │
-                    │  2. Budget Gate     │
-                    │  3. Route           │
-                    └─────────┬───────────┘
-                              │
-               ┌──────────────┼──────────────┐
-               │              │              │
-               ▼              ▼              ▼
-         ┌──────────┐  ┌──────────┐  ┌──────────┐
-         │   TIER 0  │  │   TIER 1  │  │   TIER 2  │
-         │   Cheap   │  │  Mid-tier │  │ Expensive │
-         │           │  │           │  │           │
-         │ GPT-4o-mini│ │ GPT-4o   │  │ GPT-4    │
-         │ Haiku     │  │ Sonnet   │  │ Opus     │
-         └──────────┘  └──────────┘  └──────────┘
-```
-
-### Budget Gate Decision
-
-```
-Request arrives
-       │
-       ▼
-┌──────────────────┐     NO     ┌──────────────┐
-│ Within budget?   │───────────▶│ Block / Use  │
-│                  │            │ fallback     │
-└────────┬─────────┘            └──────────────┘
-         │ YES
-         ▼
-┌──────────────────┐
-│ Route to optimal │
-│ model for tier   │
-└──────────────────┘
-```
-
-### Tier Classification
-
-```
-Prompt Complexity Score
-         │
-    0────┼────3────┼────6────┼────10
-         │         │         │
-    ┌────┴────┐ ┌──┴───┐ ┌──┴────┐
-    │  TIER 0 │ │TIER 1│ │TIER 2 │
-    │ Simple  │ │ Mid  │ │Complex│
-    │ $0.15/M │ │$2/M  │ │$10/M  │
-    └─────────┘ └──────┘ └───────┘
-
-Examples:
-  TIER 0: "What is 2+2?", classification, formatting
-  TIER 1: Summarization, Q&A, code review
-  TIER 2: Multi-step reasoning, architecture, long-chain logic
-```
-
----
-
-## Installation
+## Install
 
 ```bash
-# From PyPI
-pip install relay-llm
+pip install git+https://github.com/shubhamdusane/relay.git
+```
 
-# From source
-git clone https://github.com/yourorg/relay.git
+Not published on PyPI (the name `relay-llm` on PyPI belongs to a different project). CI tests
+Python 3.10 to 3.12. Provider SDKs (`openai`, `anthropic`) are optional and only needed if you use
+the wrappers.
+
+From source:
+
+```bash
+git clone https://github.com/shubhamdusane/relay.git
 cd relay
 pip install -e ".[dev]"
+pytest
 ```
 
-**Requirements:** Python 3.10+
-
----
-
-## Quick Start
-
-### 1. Wrap Your Client (Recommended)
+## Quick start
 
 ```python
-from relay import RelayClient
+import relay
+from openai import OpenAI
 
-# Just replace OpenAI client with RelayClient
-client = RelayClient(api_key="sk-your-key")
+client = relay.wrap_openai(OpenAI(), budget=relay.Budget(daily_usd=5.0, monthly_usd=100.0))
 
-# Everything else stays the same
-response = client.chat.completions.create(
-    model="gpt-4",  # Relay picks the optimal model
-    messages=[{"role": "user", "content": "Summarize this document..."}]
+# No model= given, so Relay picks one from the classified tier.
+resp = client.chat.completions.create(
+    messages=[{"role": "user", "content": "Classify this email as spam or not: ..."}]
 )
-
-# Check what Relay actually used
-print(response.model)  # e.g., "gpt-4o-mini" (not gpt-4)
-print(response.cost)   # e.g., 0.0003 (not 0.030)
+print(client.last_decision)  # [relay] simple -> gpt-4o-mini (rule-match)
 ```
 
-### 2. Claude Code Hook
+If you pass `model=` yourself, Relay does not override it (it still applies the budget check).
+`dry_run=True` on a wrapper returns the routing decision instead of calling the provider.
 
-Add to your Claude Code settings:
+## Cost estimates: how to reproduce
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": ".*",
-        "command": "python -m relay.hooks.claude --classify"
-      }
-    ]
-  }
-}
-```
-
-### 3. CLI
+Relay does not ship a traffic benchmark and makes no claim about percentage savings on your
+workload; savings depend entirely on your prompt mix and on which models you would otherwise use.
+What it can do is show, for one prompt, what each tier would cost at the list prices in
+`relay/pricing.py`. Reproduce with:
 
 ```bash
-# Route a single prompt
-relay route "Summarize this article about climate change"
-
-# Route with budget constraint
-relay route --budget 0.001 "Analyze this codebase"
-
-# Classify without routing
-relay classify "What is 2+2?"
-
-# Show routing stats
-relay stats --period 7d
+relay bench "Summarize this article about climate change in three bullet points." --output-tokens 256
 ```
 
----
+Real output from this repo at v0.1.0 (input tokens are estimated as chars / 4; output tokens are the
+value you pass; prices come from the hard-coded table, not live):
 
-## Benchmarks
+```
+Prompt: 67 chars (~16 tokens), routed -> gpt-4o-mini
 
-Tested across 10,000 real-world prompts:
+model                    tier           input$    output$     total$
+--------------------------------------------------------------------
+gpt-4o-mini              simple     $ 0.000002 $ 0.000154 $ 0.000156 <- routed
+claude-haiku-4           simple     $ 0.000004 $ 0.000320 $ 0.000324
+gemini-2.5-flash         simple     $ 0.000001 $ 0.000077 $ 0.000078
+gpt-4o                   standard   $ 0.000040 $ 0.002560 $ 0.002600
+claude-sonnet-4          standard   $ 0.000048 $ 0.003840 $ 0.003888
+gemini-2.5-pro           standard   $ 0.000020 $ 0.002560 $ 0.002580
+claude-opus-4            complex    $ 0.000240 $ 0.019200 $ 0.019440
+o1                       complex    $ 0.000240 $ 0.015360 $ 0.015600
+gpt-4o                   complex    $ 0.000040 $ 0.002560 $ 0.002600
 
-| Metric | Before Relay | After Relay | Improvement |
-|--------|-------------|-------------|-------------|
-| Avg cost per 1M tokens | $12.40 | $5.80 | **53% reduction** |
-| Monthly spend (100K requests) | $1,240 | $580 | **$660 saved** |
-| Quality score (human eval) | 4.2/5 | 4.1/5 | **Negligible loss** |
-| P99 latency | 820ms | 890ms | +70ms overhead |
-| Tier 0 routing accuracy | — | 97.3% | — |
-| Tier 2 routing accuracy | — | 94.8% | — |
+cheapest:        gemini-2.5-flash ($0.000078)
+most_expensive:  claude-opus-4 ($0.019440)
+max_saving_pct:  99.6%
+```
 
-**Quality preservation:** 98.7% of responses were rated "equivalent or better" by blind human evaluators.
+`max_saving_pct` is the gap between the cheapest and priciest model in the table for that one
+prompt. It is a price-list ratio, not a measured saving, and says nothing about output quality.
+Relay has not been evaluated for answer quality or routing accuracy.
 
----
+## How classification works
 
-## How the Classifier
+`classify_task` in `relay/router.py`, in this order:
 
-Relay uses a **multi-signal classifier** that combines:
+1. Prompt length of 12,000 chars or more: `COMPLEX`.
+2. Keyword regex for complex work (prove, derive, audit, research, "design a system", ...): `COMPLEX`.
+3. Keyword regex for standard work (write code, implement, debug, json schema, analyze, ...): `STANDARD`.
+4. Keyword regex for simple work (classify, extract, summarize, define, yes or no, ...): `SIMPLE`.
+5. Fallback by length: under 400 chars `SIMPLE`, under 3,000 `STANDARD`, otherwise `COMPLEX`.
 
-1. **Prompt complexity scoring** — measures reasoning depth, abstraction level, instruction count
-2. **Token economy estimation** — projects output length and structure requirements
-3. **Task type detection** — identifies common patterns (classification, extraction, generation)
+It is a heuristic. For example, a short prompt containing "audit" goes to the most expensive tier.
+Replace it with your own function via `Router(classifier=my_fn)`.
 
-### Scoring Signals
+Default tiers (the first model is used; the rest are exposed as a fallback chain):
 
-| Signal | Weight | Description |
-|--------|--------|-------------|
-| Instruction count | 0.25 | Number of distinct instructions in the prompt |
-| Reasoning depth | 0.30 | Multi-step logic, causal chains, conditionals |
-| Vocabulary complexity | 0.15 | Technical terms, domain specificity |
-| Context dependency | 0.15 | How much the response depends on prior context |
-| Output structure | 0.15 | Required format (free text vs. structured) |
+| Tier | Models |
+|------|--------|
+| simple | gpt-4o-mini, claude-haiku-4, gemini-2.5-flash |
+| standard | gpt-4o, claude-sonnet-4, gemini-2.5-pro |
+| complex | claude-opus-4, o1, gpt-4o |
 
-### Tier Thresholds
+## Budget gate
 
 ```python
-TIER_THRESHOLDS = {
-    0: (0.0, 3.0),   # Simple: basic Q&A, classification, formatting
-    1: (3.0, 6.0),   # Mid: summarization, analysis, code review
-    2: (6.0, 10.0),  # Complex: multi-step reasoning, architecture
-}
+budget = relay.Budget(daily_usd=10.0, monthly_usd=200.0, log_path="relay_spend.jsonl", key="team-a")
+budget.check(
+    "gpt-4o", input_tokens=1200, output_tokens_est=256
+)  # raises BudgetExceeded if over a cap
+budget.record("gpt-4o", input_tokens=1180, output_tokens=240)  # appends a JSONL record
 ```
 
----
+Spend is computed from token counts reported in the provider response and the hard-coded price
+table. It is an estimate, not your invoice.
 
-## Budget Gate
+## Claude Code hook
 
-The budget gate prevents cost overruns by enforcing configurable spending limits.
+`relay install` prints a settings snippet that registers `python -m relay.hook` as a
+`UserPromptSubmit` hook. It only reports the routing decision (set `RELAY_REPORT=1`); it does not
+change which model Claude Code uses.
 
-### Configuration
+## Status & limitations
 
-```python
-from relay import RelayClient, BudgetConfig
+- Alpha, not used in production. 55 unit tests, all offline. No test calls a live provider API, so
+  the wrappers are verified only against mock clients.
+- No benchmark of routing accuracy, answer quality, latency or real-world savings exists in this
+  repo. Any such numbers seen elsewhere are not backed by this code.
+- The classifier is keyword and length based. It will misroute prompts, and nothing here measures
+  how often.
+- The router can pick a model from a different provider than the client you wrapped (for example a
+  `gpt-*` model on an Anthropic client). Pin `model=` or supply tiers that match your provider.
+- `Router.fallback_chain()` exposes fallback models, but the wrappers do not retry on failure.
+- Streaming and async calls are not specially handled; token accounting needs a `usage` field on
+  the response.
+- Budget tracking is a local JSONL file: single machine, not a distributed or tamper-proof limit.
+- Pricing is a static table (last edited 2026-04) and will drift from real provider prices.
+- The classifier makes no model call by design, so its overhead is small, but latency is not
+  benchmarked here.
 
-client = RelayClient(
-    api_key="sk-...",
-    budget=BudgetConfig(
-        daily_limit=10.00,        # Max $10/day
-        monthly_limit=200.00,     # Max $200/month
-        per_request_limit=0.50,   # Max $0.50 per request
-        alert_threshold=0.80,     # Alert at 80% usage
-    )
-)
-```
-
-### Behavior When Budget Exceeded
-
-```
-Budget exceeded
-       │
-       ▼
-┌─────────────────────────────────────────────┐
-│ Strategy: "downgrade"                       │
-│                                             │
-│ Request was going to GPT-4 ($0.030)         │
-│ Budget exhausted → use GPT-4o-mini ($0.001) │
-│ Response includes: relay_budget_exceeded    │
-└─────────────────────────────────────────────┘
-```
-
-Strategies: `downgrade` (use cheaper model), `block` (raise error), `passthrough` (allow anyway with warning).
-
----
-
-## Python API Reference
-
-### `RelayClient`
-
-```python
-from relay import RelayClient, BudgetConfig, RelayConfig
-
-client = RelayClient(
-    api_key="sk-...",                          # Required
-    budget=BudgetConfig(...),                   # Optional
-    config=RelayConfig(
-        default_provider="openai",             # "openai" | "anthropic"
-        classification_mode="auto",            # "auto" | "always_tier0" | "always_tier2" | "passthrough"
-        cache_classifications=True,            # Cache prompt classifications
-    )
-)
-
-# Standard OpenAI-compatible interface
-response = client.chat.completions.create(
-    model="gpt-4",
-    messages=[...],
-)
-```
-
-### `BudgetConfig`
-
-```python
-from relay import BudgetConfig
-
-budget = BudgetConfig(
-    daily_limit=10.00,
-    monthly_limit=200.00,
-    per_request_limit=0.50,
-    alert_threshold=0.80,
-    on_exceeded="downgrade",  # "downgrade" | "block" | "passthrough"
-)
-```
-
-### `RelayConfig`
-
-```python
-from relay import RelayConfig
-
-config = RelayConfig(
-    default_provider="openai",
-    classification_mode="auto",
-    cache_classifications=True,
-    cache_ttl=3600,
-    log_routing_decisions=True,
-)
-```
-
-### Response Attributes
-
-```python
-response = client.chat.completions.create(...)
-
-response.model          # Actual model used (e.g., "gpt-4o-mini")
-response.relay_tier     # Tier classification (0, 1, or 2)
-response.relay_cost     # Actual cost of this request
-response.relay_savings  # Estimated savings vs. requested model
-response.relay_latency  # Routing decision latency in ms
-```
-
-### Anthropic Support
-
-```python
-from relay import RelayClient
-
-# Works the same with Anthropic
-client = RelayClient(
-    api_key="sk-ant-...",
-    config=RelayConfig(default_provider="anthropic")
-)
-
-# Claude messages API
-response = client.messages.create(
-    model="claude-3-5-sonnet-20241022",
-    messages=[...],
-)
-```
-
----
-
-## Architecture
+## Project layout
 
 ```
 relay/
-├── relay/
-│   ├── __init__.py
-│   ├── client.py           # RelayClient wrapper
-│   ├── router.py           # Core routing logic
-│   ├── classifier.py       # Prompt complexity classifier
-│   ├── budget.py           # Budget gate
-│   ├── providers/
-│   │   ├── openai.py       # OpenAI adapter
-│   │   └── anthropic.py    # Anthropic adapter
-│   ├── models.py           # Data models (Tier, RoutingDecision, etc.)
-│   ├── hooks/
-│   │   └── claude.py       # Claude Code hook integration
-│   └── cli.py              # CLI entry point
-├── tests/
-│   ├── test_router.py
-│   ├── test_classifier.py
-│   ├── test_budget.py
-│   └── test_client.py
-├── pyproject.toml
-└── README.md
+  router.py    # classifier, tiers, Router
+  budget.py    # Budget, BudgetExceeded
+  pricing.py   # MODEL_PRICING, estimate_cost
+  client.py    # wrap_openai, wrap_anthropic, RelayClient
+  cli.py       # `relay` command
+  hook.py      # Claude Code hook
+tests/         # 55 tests
+examples/quickstart.py
 ```
 
-### Key Design Principles
-
-- **Provider-agnostic** — works with OpenAI, Anthropic, and more
-- **Zero-prompt-rewrite** — never modifies your prompts
-- **Fail-open** — if routing fails, passes through to original model
-- **Observable** — every routing decision is logged and inspectable
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run the test suite:
-   ```bash
-   pip install -e ".[dev]"
-   pytest tests/ -v
-   ```
-4. Ensure all 55 tests pass
-5. Submit a pull request
-
-### Development
+## Development
 
 ```bash
-# Install dev dependencies
 pip install -e ".[dev]"
-
-# Run tests
-pytest tests/ -v
-
-# Run type checks
-mypy relay/
-
-# Run linter
-ruff check relay/
+pytest
+ruff check . && ruff format --check .
 ```
-
----
-
-## Roadmap
-
-- [ ] Cost analytics dashboard
-- [ ] Custom tier definitions
-- [ ] Response caching layer
-- [ ] Support for more providers (Cohere, Mistral, Google)
-- [ ] Async streaming support with routing
-- [ ] Prompt caching integration
-- [ ] Webhook alerts for budget thresholds
-- [ ] Usage CSV export
-
----
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  Made with cost-efficiency in mind.
-</p>
+MIT. See [LICENSE](LICENSE).
